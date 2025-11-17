@@ -1,39 +1,33 @@
+use include_dir::{Dir, include_dir};
 use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-fn copy_github_from_repo(wrapper_path: &PathBuf) -> io::Result<()> {
-    let exe_dir = env::current_exe()?
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Cannot find exe directory"))?
-        .to_path_buf();
+static GITHUB_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/.github");
 
-    let mut possible_locations = vec![exe_dir.join(".github")];
-
-    if let Some(p) = exe_dir.parent() {
-        possible_locations.push(p.join(".github"));
-        if let Some(pp) = p.parent() {
-            possible_locations.push(pp.join(".github"));
-        }
-    }
-
-    if let Ok(home) = env::var("HOME") {
-        possible_locations.push(PathBuf::from(home).join(".wraptor").join(".github"));
-    }
-
-    let src_github = possible_locations
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                ".github template not found. Copy .github to ~/.wraptor/ or run from repo",
-            )
-        })?;
-
+fn copy_github_from_embedded(wrapper_path: &PathBuf) -> io::Result<()> {
     let dst_github = wrapper_path.join(".github");
-    copy_dir(&src_github, &dst_github)
+    copy_embedded_dir(&GITHUB_DIR, &dst_github)
+}
+
+fn copy_embedded_dir(src: &Dir, dst: &PathBuf) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+
+    for file in src.files() {
+        let file_path = dst.join(file.path());
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(file_path, file.contents())?;
+    }
+
+    for dir in src.dirs() {
+        let dir_path = dst.join(dir.path());
+        copy_embedded_dir(dir, &dir_path)?;
+    }
+
+    Ok(())
 }
 
 fn copy_dir(src: &PathBuf, dst: &PathBuf) -> io::Result<()> {
@@ -76,7 +70,7 @@ fn wrap_existing(source: &str) -> io::Result<()> {
     }
 
     copy_dir(&source_path, &wrapper_path)?;
-    copy_github_from_repo(&wrapper_path)?;
+    copy_github_from_embedded(&wrapper_path)?;
 
     println!("✅ Wrapped project at: {}", wrapper_path.display());
     Ok(())
@@ -93,7 +87,7 @@ fn create_empty(name: &str) -> io::Result<()> {
     }
 
     fs::create_dir_all(&wrapper_path)?;
-    copy_github_from_repo(&wrapper_path)?;
+    copy_github_from_embedded(&wrapper_path)?;
 
     println!("✅ Created wrapper at: {}", wrapper_path.display());
     Ok(())
