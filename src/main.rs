@@ -15,7 +15,8 @@ fn copy_embedded_dir(src: &Dir, dst: &PathBuf) -> io::Result<()> {
     fs::create_dir_all(dst)?;
 
     for file in src.files() {
-        let file_path = dst.join(file.path());
+        let relative_path = file.path().strip_prefix(".github").unwrap_or(file.path());
+        let file_path = dst.join(relative_path);
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -23,7 +24,8 @@ fn copy_embedded_dir(src: &Dir, dst: &PathBuf) -> io::Result<()> {
     }
 
     for dir in src.dirs() {
-        let dir_path = dst.join(dir.path());
+        let relative_path = dir.path().strip_prefix(".github").unwrap_or(dir.path());
+        let dir_path = dst.join(relative_path);
         copy_embedded_dir(dir, &dir_path)?;
     }
 
