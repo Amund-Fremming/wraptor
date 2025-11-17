@@ -1,61 +1,38 @@
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent},
-    execute,
-    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
-};
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::PathBuf;
 
-fn read_input(prompt: &str) -> io::Result<String> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut input = String::new();
+fn copy_github_from_repo(wrapper_path: &PathBuf) -> io::Result<()> {
+    let exe_dir = env::current_exe()?
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Cannot find exe directory"))?
+        .to_path_buf();
 
-    loop {
-        if let Event::Key(KeyEvent {
-            code, modifiers, ..
-        }) = event::read()?
-        {
-            use crossterm::event::KeyModifiers;
+    let mut possible_locations = vec![exe_dir.join(".github")];
 
-            if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "User cancelled"));
-            }
-
-            match code {
-                KeyCode::Enter => break,
-                KeyCode::Char(c) => {
-                    input.push(c);
-                    print!("{}", c);
-                    io::stdout().flush()?;
-                }
-                KeyCode::Backspace if !input.is_empty() => {
-                    input.pop();
-                    print!("\x08 \x08");
-                    io::stdout().flush()?;
-                }
-                _ => {}
-            }
+    if let Some(p) = exe_dir.parent() {
+        possible_locations.push(p.join(".github"));
+        if let Some(pp) = p.parent() {
+            possible_locations.push(pp.join(".github"));
         }
     }
-    println!();
-    Ok(input)
-}
 
-fn copy_github_folder(wrapper_path: &PathBuf) -> io::Result<()> {
-    let current_dir = env::current_dir()?;
-    let src_github = current_dir.join(".github");
-    let dst_github = wrapper_path.join(".github");
-
-    if !src_github.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            ".github folder not found",
-        ));
+    if let Ok(home) = env::var("HOME") {
+        possible_locations.push(PathBuf::from(home).join(".wraptor").join(".github"));
     }
 
+    let src_github = possible_locations
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                ".github template not found. Copy .github to ~/.wraptor/ or run from repo",
+            )
+        })?;
+
+    let dst_github = wrapper_path.join(".github");
     copy_dir(&src_github, &dst_github)
 }
 
@@ -75,9 +52,8 @@ fn copy_dir(src: &PathBuf, dst: &PathBuf) -> io::Result<()> {
     Ok(())
 }
 
-fn wrap_existing() -> io::Result<()> {
-    let source = read_input("Source project path: ")?;
-    let source_path = PathBuf::from(source.trim());
+fn wrap_existing(source: &str) -> io::Result<()> {
+    let source_path = PathBuf::from(source);
 
     if !source_path.exists() {
         return Err(io::Error::new(
@@ -100,15 +76,14 @@ fn wrap_existing() -> io::Result<()> {
     }
 
     copy_dir(&source_path, &wrapper_path)?;
-    copy_github_folder(&wrapper_path)?;
+    copy_github_from_repo(&wrapper_path)?;
 
     println!("✅ Wrapped project at: {}", wrapper_path.display());
     Ok(())
 }
 
-fn create_empty() -> io::Result<()> {
-    let name = read_input("Project name: ")?;
-    let wrapper_path = PathBuf::from(format!("wrapped-{}", name.trim()));
+fn create_empty(name: &str) -> io::Result<()> {
+    let wrapper_path = PathBuf::from(format!("wrapped-{}", name));
 
     if wrapper_path.exists() {
         return Err(io::Error::new(
@@ -118,36 +93,29 @@ fn create_empty() -> io::Result<()> {
     }
 
     fs::create_dir_all(&wrapper_path)?;
-    copy_github_folder(&wrapper_path)?;
+    copy_github_from_repo(&wrapper_path)?;
 
     println!("✅ Created wrapper at: {}", wrapper_path.display());
     Ok(())
 }
 
 fn main() -> io::Result<()> {
-    enable_raw_mode()?;
-    execute!(io::stdout(), Clear(ClearType::All))?;
+    let args: Vec<String> = env::args().collect();
 
-    println!("🦖 WRAPTOR\r");
-    println!("\r");
-    println!("1. Wrap existing project\r");
-    println!("2. Create empty wrapper\r");
-    println!("\r");
+    if args.len() < 2 {
+        eprintln!("Usage: wraptor <folder-name>");
+        eprintln!("       wraptor <source-path> (if exists, will wrap existing project)");
+        std::process::exit(1);
+    }
 
-    let choice = read_input("Select (1/2): ")?;
+    let input = &args[1];
+    let input_path = PathBuf::from(input);
 
-    let result = match choice.trim() {
-        "1" => wrap_existing(),
-        "2" => create_empty(),
-        _ => {
-            disable_raw_mode()?;
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Invalid choice",
-            ));
-        }
-    };
+    if input_path.exists() {
+        wrap_existing(input)?;
+    } else {
+        create_empty(input)?;
+    }
 
-    disable_raw_mode()?;
-    result
+    Ok(())
 }
